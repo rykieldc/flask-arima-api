@@ -4,6 +4,7 @@ import os
 import signal
 from flask import Flask, request, jsonify
 from statsmodels.tsa.arima.model import ARIMA
+from pmdarima import auto_arima  # Auto ARIMA to find best order
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -15,35 +16,37 @@ def handler(signum, frame):
 
 signal.signal(signal.SIGALRM, handler)
 
-def forecast_stock(sales_data, periods=7):  # Reduce forecast to 7 days
+def forecast_stock(sales_data, periods=7):
     predictions = {}
 
     for item_name, sales_history in sales_data.items():
         try:
-            if not isinstance(sales_history, list) or len(sales_history) < 3:
-                predictions[item_name] = 0  # Default prediction for bad data
+            if not isinstance(sales_history, list) or len(sales_history) < 5:
+                predictions[item_name] = 0  # Default for bad data
                 continue  
-
-            while len(sales_history) < 5:
-                sales_history.append(0)
 
             df = pd.DataFrame({"consumed_stock": sales_history})
 
-            signal.alarm(20)  # Increase timeout to 20 seconds per item
+            signal.alarm(20)  # 20s timeout per item
 
-            # Train a simpler ARIMA model
-            model = ARIMA(df['consumed_stock'], order=(2,1,0))  # Reduced complexity
+            # Find best ARIMA order
+            auto_model = auto_arima(df['consumed_stock'], seasonal=False, suppress_warnings=True, stepwise=True)
+
+            # Train ARIMA with best order
+            best_order = auto_model.order
+            model = ARIMA(df['consumed_stock'], order=best_order)
             model_fit = model.fit()
             forecast = model_fit.forecast(steps=periods)
 
-            signal.alarm(0)  # Reset timeout after success
+            signal.alarm(0)  # Reset timeout
 
-            predicted_value = round(forecast[-1])  
-            predictions[item_name] = max(predicted_value, 0)  
+            # Take the last forecasted value, round it, and ensure it's non-negative
+            predicted_value = max(round(forecast[-1]), 0)
+            predictions[item_name] = predicted_value  
 
         except Exception as e:
             predictions[item_name] = 0  
-            print(f"Error processing {item_name}: {e}")  
+            print(f"⚠️ Error processing {item_name}: {e}")  # Log the error
 
     return predictions
 
