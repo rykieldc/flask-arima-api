@@ -6,43 +6,50 @@ from statsmodels.tsa.arima.model import ARIMA
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Allows cross-origin requests
+CORS(app)  # Enables cross-origin requests
 
-# Function to perform ARIMA forecasting
-def forecast_stock(data, periods=30):
-    try:
-        df = pd.DataFrame(data)  # Convert input to DataFrame
-        df['date'] = pd.to_datetime(df['date'])
-        df.set_index('date', inplace=True)
+# Function to perform ARIMA forecasting for multiple items
+def forecast_stock(sales_data, periods=30):
+    predictions = {}
 
-        # Ensure column exists
-        if 'consumed_stock' not in df.columns:
-            return {"error": "Missing 'consumed_stock' column"}
+    for item_name, sales_history in sales_data.items():
+        try:
+            if not isinstance(sales_history, list):
+                predictions[item_name] = 0  # Default prediction if input is invalid
+                continue  
 
-        # Train ARIMA model
-        model = ARIMA(df['consumed_stock'], order=(5,1,0))  # Adjust order if needed
-        model_fit = model.fit()
-        forecast = model_fit.forecast(steps=periods)
+            # Ensure at least 5 data points by adding zeros if needed
+            while len(sales_history) < 5:
+                sales_history.append(0)
 
-        # Convert forecast to whole numbers
-        forecast_rounded = [round(value) for value in forecast]
+            # Convert sales history to DataFrame
+            df = pd.DataFrame({"consumed_stock": sales_history})
 
-        return {"forecast": forecast_rounded}
-    
-    except Exception as e:
-        return {"error": str(e)}
+            # Train ARIMA model
+            model = ARIMA(df['consumed_stock'], order=(5,1,0))  # Adjust order if needed
+            model_fit = model.fit()
+            forecast = model_fit.forecast(steps=periods)
+
+            # Convert forecast to whole numbers
+            predicted_value = round(forecast[-1])  # Taking the last predicted value
+            predictions[item_name] = max(predicted_value, 0)  # Ensure no negative values
+
+        except Exception as e:
+            predictions[item_name] = 0  # Default prediction in case of errors
+
+    return predictions
 
 # API Endpoint for predictions
 @app.route('/predict', methods=['POST'])
 def predict():
     request_data = request.json
-    data = request_data.get("history", [])
+    sales_data = request_data.get("sales_data", {})
 
-    if not data:
-        return jsonify({"error": "No data provided"}), 400
+    if not sales_data:
+        return jsonify({"error": "No sales data provided"}), 400
 
-    predictions = forecast_stock(data)
-    return jsonify(predictions)
+    predictions = forecast_stock(sales_data)
+    return jsonify({"predictions": predictions})
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))  # Get PORT from environment
