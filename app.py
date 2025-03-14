@@ -24,7 +24,10 @@ def forecast_stock(data, periods=30):
         model_fit = model.fit()
         forecast = model_fit.forecast(steps=periods)
 
-        return {"forecast": forecast.tolist()}
+        # Convert forecast to whole numbers
+        forecast_rounded = [round(value) for value in forecast]
+
+        return {"forecast": forecast_rounded}
     
     except Exception as e:
         return {"error": str(e)}
