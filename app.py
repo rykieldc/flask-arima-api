@@ -1,12 +1,19 @@
 import pandas as pd
 import numpy as np
 import os
+import signal
 from flask import Flask, request, jsonify
 from statsmodels.tsa.arima.model import ARIMA
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)  # Enables cross-origin requests
+
+# Timeout handler
+def handler(signum, frame):
+    raise Exception("Processing Timeout")
+
+signal.signal(signal.SIGALRM, handler)
 
 # Function to perform ARIMA forecasting for multiple items
 def forecast_stock(sales_data, periods=30):
@@ -25,10 +32,14 @@ def forecast_stock(sales_data, periods=30):
             # Convert sales history to DataFrame
             df = pd.DataFrame({"consumed_stock": sales_history})
 
+            signal.alarm(5)  # Set timeout for ARIMA processing (5 sec per item)
+
             # Train ARIMA model
             model = ARIMA(df['consumed_stock'], order=(5,1,0))  # Adjust order if needed
             model_fit = model.fit()
             forecast = model_fit.forecast(steps=periods)
+
+            signal.alarm(0)  # Reset timeout after success
 
             # Convert forecast to whole numbers
             predicted_value = round(forecast[-1])  # Taking the last predicted value
@@ -36,6 +47,7 @@ def forecast_stock(sales_data, periods=30):
 
         except Exception as e:
             predictions[item_name] = 0  # Default prediction in case of errors
+            print(f"Error processing {item_name}: {e}")  # Log the error for debugging
 
     return predictions
 
