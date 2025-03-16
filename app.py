@@ -3,17 +3,17 @@ import numpy as np
 import os
 import signal
 from flask import Flask, request, jsonify
-from statsmodels.tsa.arima.model import ARIMA
 from flask_cors import CORS
 import warnings
+from pmdarima import auto_arima  # Auto-ARIMA for automatic order selection
 
-# Ignore ARIMA warnings
+# Ignore warnings
 warnings.filterwarnings("ignore")
 
 app = Flask(__name__)
 CORS(app)  # Enables CORS for frontend access
 
-# Timeout handler to prevent Render timeouts
+# Timeout handler to prevent long computations
 def handler(signum, frame):
     raise Exception("Processing Timeout")
 
@@ -28,19 +28,17 @@ def forecast_stock(sales_data, periods=7):
                 predictions[item_name] = np.median(sales_history) if sales_history else 0  # Default prediction
                 continue  
 
-            # Ensure at least 5 data points
+            # Ensure at least 5 data points by duplicating the last value
             while len(sales_history) < 5:
-                sales_history.append(sales_history[-1] if sales_history else 0)
+                sales_history.append(sales_history[-1])
 
             df = pd.DataFrame({"consumed_stock": sales_history})
 
             signal.alarm(10)  # Set timeout to 10 seconds per item
 
-            # Smarter ARIMA selection
-            order = (1,1,0) if len(sales_history) < 10 else (2,1,0)  
-            model = ARIMA(df['consumed_stock'], order=order)  
-            model_fit = model.fit()
-            forecast = model_fit.forecast(steps=periods)
+            # Auto-select best ARIMA order
+            model = auto_arima(df['consumed_stock'], seasonal=False, suppress_warnings=True, stepwise=True)
+            forecast = model.predict(n_periods=periods)
 
             signal.alarm(0)  # Reset timeout after success
 
@@ -48,7 +46,7 @@ def forecast_stock(sales_data, periods=7):
             predictions[item_name] = predicted_value  
 
         except Exception as e:
-            predictions[item_name] = int(np.median(sales_history)) if sales_history else 0  # Use median as fallback
+            predictions[item_name] = int(np.median(sales_history)) if sales_history else 0  # Fallback to median
             print(f"⚠️ Error processing {item_name}: {e}")  
 
     return predictions
@@ -72,6 +70,6 @@ def predict():
     except Exception as e:
         return jsonify({"error": str(e)}), 500  # Return 500 if something goes wrong
 
-if __name__ == '__main__':
+if __name__ == '__main__':  
     port = int(os.environ.get("PORT", 10000))  # Render uses dynamic ports
     app.run(debug=False, host="0.0.0.0", port=port)  # Turn off debug for production
