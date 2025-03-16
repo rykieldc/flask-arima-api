@@ -3,17 +3,17 @@ import numpy as np
 import os
 import signal
 from flask import Flask, request, jsonify
+from statsmodels.tsa.arima.model import ARIMA
 from flask_cors import CORS
 import warnings
-from pmdarima import auto_arima  # Auto-ARIMA for automatic order selection
 
-# Ignore warnings
+# Ignore ARIMA warnings
 warnings.filterwarnings("ignore")
 
 app = Flask(__name__)
 CORS(app)  # Enables CORS for frontend access
 
-# Timeout handler to prevent long computations
+# Timeout handler to prevent Render timeouts
 def handler(signum, frame):
     raise Exception("Processing Timeout")
 
@@ -28,17 +28,24 @@ def forecast_stock(sales_data, periods=7):
                 predictions[item_name] = np.median(sales_history) if sales_history else 0  # Default prediction
                 continue  
 
-            # Ensure at least 5 data points by duplicating the last value
+            # Ensure at least 5 data points
             while len(sales_history) < 5:
-                sales_history.append(sales_history[-1])
+                sales_history.append(sales_history[-1] if sales_history else 0)
 
             df = pd.DataFrame({"consumed_stock": sales_history})
 
             signal.alarm(10)  # Set timeout to 10 seconds per item
 
-            # Auto-select best ARIMA order
-            model = auto_arima(df['consumed_stock'], seasonal=False, suppress_warnings=True, stepwise=True)
-            forecast = model.predict(n_periods=periods)
+            # Smarter ARIMA selection
+            if len(sales_history) < 5:
+                order = (1, 1, 0)  # Use simple model for short data
+            elif len(sales_history) < 10:
+                order = (2, 1, 0)  # Use more past values for medium data
+            else:
+                order = (2, 1, 1)  # More robust model for longer data 
+            model = ARIMA(df['consumed_stock'], order=order)  
+            model_fit = model.fit()
+            forecast = model_fit.forecast(steps=periods)
 
             signal.alarm(0)  # Reset timeout after success
 
@@ -46,7 +53,7 @@ def forecast_stock(sales_data, periods=7):
             predictions[item_name] = predicted_value  
 
         except Exception as e:
-            predictions[item_name] = int(np.median(sales_history)) if sales_history else 0  # Fallback to median
+            predictions[item_name] = int(np.median(sales_history)) if sales_history else 0  # Use median as fallback
             print(f"⚠️ Error processing {item_name}: {e}")  
 
     return predictions
